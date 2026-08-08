@@ -4,7 +4,8 @@ import { api } from "../lib/api";
 export const dynamic = "force-dynamic";
 
 export default async function ShowtimesPage({ searchParams }) {
-  const movieId = parseInt(searchParams.movie_id, 10);
+  const query = await searchParams;
+  const movieId = parseInt(query.movie_id, 10);
   if (!Number.isFinite(movieId)) {
     return <main className="p-8 text-slate-100">movie_id is required</main>;
   }

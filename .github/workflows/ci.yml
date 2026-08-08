@@ -5,52 +5,95 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-test:
+  api-test:
+    name: API lint, test, and image
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: cinemaseat
+          POSTGRES_DB: cinema_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -U postgres -d cinema_test"
           --health-interval 5s
+          --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/cinemaseat
-      HOLD_TTL_SECONDS: "10"
-      GATEWAY_URL: http://localhost:9000
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/cinema_test
       GATEWAY_SECRET: z2p-2026-secret
+      HOLD_TTL_SECONDS: "10"
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: api/package-lock.json
 
-      - name: Lint + test API
+      - name: Install API dependencies
         working-directory: api
-        run: |
-          npm ci
-          npm run lint
-          # Schema + seed are loaded by the local docker-compose workflow; in CI
-          # the service container is created empty, so apply them directly.
-          psql "postgres://postgres:postgres@localhost:5432/cinemaseat" \
-            -v ON_ERROR_STOP=1 -f ../db/init/0001_init.sql
-          psql "postgres://postgres:postgres@localhost:5432/cinemaseat" \
-            -v ON_ERROR_STOP=1 -f ../db/init/0002_seed.sql
-          npm test
+        run: npm ci
 
-      - name: Lint + build Frontend
+      - name: Initialize test database
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/init/0001_init.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/init/0002_seed.sql
+
+      - name: Lint API
+        working-directory: api
+        run: npm run lint
+
+      - name: Audit API production dependencies
+        working-directory: api
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Test API
+        working-directory: api
+        run: npm test
+
+      - name: Build API image
+        run: docker build --tag cinemaseat-api:ci api
+
+  frontend-build:
+    name: Frontend lint, build, and image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
         working-directory: frontend
-        run: |
-          npm ci
-          npm run lint
-          npm run build
+        run: npm ci
 
-      - name: Docker build (api)
-        run: docker build -t cinemaseat-api ./api
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
 
-      - name: Docker build (frontend)
-        run: docker build -t cinemaseat-frontend ./frontend
+      - name: Audit frontend production dependencies
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Build frontend image
+        run: docker build --tag cinemaseat-frontend:ci frontend

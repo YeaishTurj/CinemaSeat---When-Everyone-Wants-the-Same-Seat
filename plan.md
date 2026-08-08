@@ -2,7 +2,7 @@
 
 **Event:** Zero to Production · Phase 2 · IEEECS CUET (8 Aug 2026, 9:00 AM – 8:00 PM)
 **Reference:** `ARCHITECTURE.md` (design), `CinemaSeat_Problem_Statement.pdf` (what), `CinemaSeat_Gateway_Reference.pdf` (gateway contract), `Zero_to_Production_Rulebook.pdf` (rules + scoring)
-**Stack:** Next.js + React (JS), Node.js + Express (JS), PostgreSQL (raw SQL via `pg`), Docker / Docker Compose, GitHub Actions, Poridhi VM
+**Stack:** Next.js 16 + React 19 (JS), Node.js + Express (JS), PostgreSQL (raw SQL via `pg`), Docker / Docker Compose, GitHub Actions, Poridhi VM
 **Build method:** AI-agent-implemented, human-understood and human-defended (rulebook §6.3)
 
 ---
@@ -522,13 +522,13 @@ router.post('/bookings/:id/pay', async (req, res, next) => {
 
 ### 6.4 Done-when checklist
 
-- [ ] Manual demo from a clean `docker compose up`:
+- [x] Manual demo from a clean `docker compose up`:
   1. Open http://localhost:3000
   2. Pick a movie → showtime → seat
   3. Click hold → success
   4. Receive OTP, type it in
   5. Click pay → see pending → wait → see confirmed
-- [ ] The whole demo completes in <30 seconds on deterministic mode
+- [x] The whole demo completes in <30 seconds on deterministic mode
 - [ ] Frontend talks to backend via one base URL (no second port from the user's view, or `nginx` reverse proxy in front)
 - [ ] No raw SQL errors in the logs
 
@@ -654,21 +654,27 @@ describe('POST /webhooks/payment', () => {
 
 **Goal:** Every Dockerfile is multi-stage, image sizes are sane, CI is green on PRs.
 
+> **Implemented and locally verified on 8 August 2026.** Both images are
+> multi-stage/non-root, lockfiles are committed, real lint replaces placeholder
+> scripts, all six API tests pass against PostgreSQL, the Next.js production
+> build passes, and Compose health checks are green. Measured images: API
+> 49.9 MB, frontend 63.8 MB.
+
 ### 8.1 Multi-stage `api/Dockerfile`
 
 ```dockerfile
-# deps
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && npm cache clean --force
 
-# runtime
-FROM node:20-alpine
+FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+ENV PORT=3000
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY package*.json ./
+COPY src ./src
 EXPOSE 3000
 USER node
 CMD ["node", "src/server.js"]
@@ -684,6 +690,7 @@ RUN npm ci
 
 FROM node:20-alpine AS build
 WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
@@ -691,13 +698,14 @@ RUN npm run build
 FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=build /app/.next ./.next
-COPY --from=build /app/public ./public
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/node_modules ./node_modules
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+COPY --from=build /app/.next/standalone ./
+COPY --from=build /app/.next/static ./.next/static
 EXPOSE 3000
 USER node
-CMD ["npx", "next", "start", "-p", "3000"]
+CMD ["node", "server.js"]
 ```
 
 ### 8.3 `.github/workflows/ci.yml`
@@ -722,17 +730,20 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/cinema_test
+      GATEWAY_SECRET: z2p-2026-secret
+      HOLD_TTL_SECONDS: "10"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm, cache-dependency-path: api/package-lock.json }
       - run: cd api && npm ci
+      - run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/init/0001_init.sql
+      - run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/init/0002_seed.sql
       - run: cd api && npm run lint
+      - run: cd api && npm audit --omit=dev --audit-level=high
       - run: cd api && npm test
-        env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/cinema_test
-          GATEWAY_SECRET: z2p-2026-secret
-          HOLD_TTL_SECONDS: 60
       - run: cd api && docker build -t api:ci .
 
   frontend-build:
@@ -742,43 +753,57 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm, cache-dependency-path: frontend/package-lock.json }
       - run: cd frontend && npm ci
+      - run: cd frontend && npm run lint
+      - run: cd frontend && npm audit --omit=dev --audit-level=high
       - run: cd frontend && npm run build
       - run: cd frontend && docker build -t frontend:ci .
 ```
 
 ### 8.4 Deploy workflow (CD on main only — rulebook §7.1)
 
-`.github/workflows/deploy.yml`:
+`.github/workflows/deploy.yml` is triggered by a completed CI workflow and
+deploys only when that CI run succeeded, came from a push, and targeted
+`main`. Required secrets are `PORIDHI_HOST`, `PORIDHI_USER`, and
+`PORIDHI_SSH_KEY`. The remote script fast-forwards `~/cinemaseat`, rebuilds
+Compose, and fails unless the API health check succeeds.
 
 ```yaml
 name: Deploy
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 jobs:
   deploy:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: appleboy/ssh-action@v1
+      - uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.PORIDHI_HOST }}
           username: ${{ secrets.PORIDHI_USER }}
           key: ${{ secrets.PORIDHI_SSH_KEY }}
           script: |
+            set -e
             cd ~/cinemaseat
-            git pull --ff-only
-            docker compose pull
-            docker compose up -d --build
-            docker compose exec -T api node -e "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1))"
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+            docker compose up -d --build --remove-orphans
+            docker compose exec -T api node -e "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 ```
 
 ### 8.5 Done-when checklist
 
-- [ ] Every PR runs the api tests against a real Postgres service container
-- [ ] Every PR builds the api and frontend Docker images
-- [ ] `docker images` shows `api` < 250 MB and `frontend` < 400 MB
-- [ ] Default branch pushes trigger the deploy job
+- [x] Every PR runs the api tests against a real Postgres service container
+- [x] Every PR builds the api and frontend Docker images
+- [x] `docker images` shows `api` < 250 MB and `frontend` < 400 MB (49.9 MB / 63.8 MB measured)
+- [x] Successful default-branch push CI triggers the deploy workflow
 - [ ] PRs without green CI cannot be merged (branch protection rule)
+
+The final item is a GitHub repository setting, not a code change: protect
+`main` and require the `API lint, test, and image` and
+`Frontend lint, build, and image` checks.
 
 ---
 

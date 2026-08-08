@@ -4,11 +4,17 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     environment:
       # Server-side fetch uses this directly (no rewrite on the server).
       # Client-side uses the same URL via next.config.js rewrites().
       - NEXT_PUBLIC_API_URL=http://api:3000
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   api:
     build: ./api
@@ -28,6 +34,11 @@ services:
       - OTP_MOCK_MODE=${OTP_MOCK_MODE:-deterministic}
       - GATEWAY_MOCK_MODE=${GATEWAY_MOCK_MODE:-deterministic}
       - PORT=3000
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   postgres:
     image: postgres:16
@@ -54,6 +65,7 @@ services:
       - "9000:9000"
     environment:
       - PORT=9000
+      - GATEWAY_SECRET=${GATEWAY_SECRET:-z2p-2026-secret}
     healthcheck:
       # The gateway binds IPv4-only; `localhost` resolves to ::1 inside this image,
       # so use 127.0.0.1 explicitly. wget ships with the image.

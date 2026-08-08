@@ -2,7 +2,7 @@
 
 const express = require("express");
 
-const { withTx, query } = require("../../shared/db");
+const { withTx } = require("../../shared/db");
 const { verify: verifyHmac } = require("../../shared/hmac");
 
 const router = express.Router();
@@ -67,8 +67,8 @@ router.post(
  *
  * expected payload: { event_id, payment_id, booking_ref, status, amount }
  */
-async function handlePaymentEvent(payload, req) {
-  const { event_id, payment_id, booking_ref, status, amount } = payload;
+async function handlePaymentEvent(payload, _req) {
+  const { event_id, payment_id, booking_ref, status } = payload;
   if (!event_id || !booking_ref || !status) {
     throw new Error("missing required fields");
   }

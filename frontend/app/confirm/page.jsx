@@ -3,7 +3,8 @@ import { api } from "../lib/api";
 export const dynamic = "force-dynamic";
 
 export default async function ConfirmPage({ searchParams }) {
-  const bookingId = parseInt(searchParams.booking_id, 10);
+  const query = await searchParams;
+  const bookingId = parseInt(query.booking_id, 10);
   if (!Number.isFinite(bookingId)) {
     return <main className="p-8 text-slate-100">booking_id required</main>;
   }

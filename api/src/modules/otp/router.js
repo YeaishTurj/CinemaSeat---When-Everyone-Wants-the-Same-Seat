@@ -54,7 +54,7 @@ router.post(
   },
 );
 
-async function handleOtpEvent(payload, req) {
+async function handleOtpEvent(payload, _req) {
   const { ref, status } = payload;
   if (!ref) return; // nothing we can do
 

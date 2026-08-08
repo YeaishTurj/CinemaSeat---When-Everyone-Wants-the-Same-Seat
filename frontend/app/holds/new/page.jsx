@@ -4,8 +4,9 @@ import HoldForm from "./HoldForm";
 export const dynamic = "force-dynamic";
 
 export default async function HoldNewPage({ searchParams }) {
-  const showtimeId = parseInt(searchParams.showtime_id, 10);
-  const seatId = parseInt(searchParams.seat_id, 10);
+  const query = await searchParams;
+  const showtimeId = parseInt(query.showtime_id, 10);
+  const seatId = parseInt(query.seat_id, 10);
   if (!Number.isFinite(showtimeId) || !Number.isFinite(seatId)) {
     return (
       <main className="p-8 text-slate-100">

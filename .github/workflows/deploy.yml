@@ -1,25 +1,39 @@
 name: Deploy
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    name: Deploy to Poridhi VM
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Build images
-        run: |
-          docker compose -f docker-compose.yml build
-
-      # Wire to Poridhi VM via SSH runner or a self-hosted runner on the VM.
-      # Concrete deploy steps depend on the Poridhi load-balancer target chosen
-      # at deployment time — placeholder below.
-      - name: Deploy to Poridhi VM
-        env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-        run: |
-          echo "Deploy step is environment-specific; configure self-hosted runner or SSH."
+      - name: Update application over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PORIDHI_HOST }}
+          username: ${{ secrets.PORIDHI_USER }}
+          key: ${{ secrets.PORIDHI_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/cinemaseat
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+            docker compose up -d --build --remove-orphans
+            docker compose exec -T api node -e "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"

@@ -1,10 +1,12 @@
 import { api } from "../../lib/api";
+import Link from "next/link";
 import BookingFlow from "./BookingFlow";
 
 export const dynamic = "force-dynamic";
 
 export default async function BookingPage({ params }) {
-  const bookingId = parseInt(params.id, 10);
+  const { id } = await params;
+  const bookingId = parseInt(id, 10);
   if (!Number.isFinite(bookingId)) {
     return <main className="p-8 text-slate-100">invalid booking id</main>;
   }
@@ -18,9 +20,9 @@ export default async function BookingPage({ params }) {
         <p className="text-slate-400">
           {e.status === 404 ? "Booking not found." : e.message}
         </p>
-        <a className="text-emerald-400 underline" href="/">
+        <Link className="text-emerald-400 underline" href="/">
           back to movies
-        </a>
+        </Link>
       </main>
     );
   }

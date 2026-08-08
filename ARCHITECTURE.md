@@ -1,7 +1,7 @@
 # CinemaSeat — System Architecture Document
 
 **Event:** Zero to Production · Phase 2 · IEEECS CUET (8 Aug 2026)
-**Stack:** Next.js + React (JS), Node.js + Express (JS), PostgreSQL (raw SQL via `pg`), Docker / Docker Compose, GitHub Actions, Poridhi VM
+**Stack:** Next.js 16 + React 19 (JS), Node.js + Express (JS), PostgreSQL (raw SQL via `pg`), Docker / Docker Compose, GitHub Actions, Poridhi VM
 **Build method:** AI-agent-implemented, human-understood and human-defended (rulebook §6.3 — every member must be able to explain the system regardless of who typed it)
 
 ---
@@ -50,7 +50,7 @@ CinemaSeat's entire engineering challenge reduces to one sentence: **when 100 pe
 
 ## 3. Technology Stack
 
-### 3.1 Frontend — Next.js + React, plain JavaScript
+### 3.1 Frontend — Next.js 16 + React 19, plain JavaScript
 
 - **Why this:** You already know it; App Router gives file-based routing for the 5-screen flow (browse → seat-map → hold → pay → confirm) with zero extra setup. TS rejected — it adds a compile-error surface to debug live, on a stack you called "good enough" in JS, and isn't worth the risk in 8 hours.
 - **Benefit:** One repo, one `npm run dev`, one container. No separate "frontend framework decision" to defend.
@@ -435,7 +435,8 @@ Endpoint names are ours to choose per the rulebook — this is a minimum, not a 
 services:
   frontend:
     build: ./frontend
-    depends_on: [api]
+    depends_on:
+      api: { condition: service_healthy }
 
   api:
     build: ./api
@@ -444,9 +445,9 @@ services:
       gateway: { condition: service_healthy }
     environment:
       - HOLD_TTL_SECONDS=${HOLD_TTL_SECONDS:-300}
-      - DATABASE_URL=${DATABASE_URL}
-      - GATEWAY_URL=http://gateway:9000
-      - GATEWAY_SECRET=${GATEWAY_SECRET}
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/cinemaseat}
+      - GATEWAY_URL=${GATEWAY_URL:-http://gateway:9000}
+      - GATEWAY_SECRET=${GATEWAY_SECRET:-z2p-2026-secret}
 
   postgres:
     image: postgres:16
@@ -459,7 +460,7 @@ services:
     image: asifmahmoud414/mock-gateway:latest
     ports: ["9000:9000"]
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9000/health"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:9000/health"]
       interval: 5s
       retries: 10
 ```
@@ -485,10 +486,19 @@ const ttl = parseInt(process.env.HOLD_TTL_SECONDS || "300", 10);
 ### 12.3 `.env.example` committed
 
 - **Why this:** Rulebook §8 — _"all environment-specific values and secrets in environment variables, with an .env.example committed."_
-- **Benefit:** Anyone cloning the repo can `cp .env.example .env` and have a known-good starting point without reading the README twice.
+- **Benefit:** Compose has safe mock-service defaults, so a clean clone starts directly; `.env.example` documents every supported override without containing production credentials.
 - **Problem it solves:** Documentation criterion; also prevents the "works on my machine" failure mode.
 - **When it can fail:** A contributor commits a real `.env` by accident (GitHub secret-scanning blocks it, but only if it's a recognised pattern).
 - **Future if it fails:** Add `.env` to `.gitignore` (it is), and add a CI check that the diff doesn't introduce new env keys not in `.env.example`.
+
+### 12.4 Production image design and measured size
+
+- Both application Dockerfiles are multi-stage and install from committed lockfiles with `npm ci`.
+- Runtime containers execute as the unprivileged `node` user.
+- The API runtime copies only production dependencies and `src/`.
+- Next.js uses `output: "standalone"`; the frontend runtime copies only the standalone server and static assets.
+- Compose health checks gate frontend startup on API readiness.
+- Measured on 8 August 2026: API **49.9 MB**, frontend **63.8 MB**, both comfortably below the Phase 6 limits of 250 MB and 400 MB.
 
 ---
 
@@ -500,11 +510,11 @@ Pull request / push
    → lint
    → unit + integration tests (Jest/Supertest) — concurrency test against real Postgres
    → docker build (frontend, api)
-main branch push only
-   → all of the above, then deploy (Poridhi VM via SSH or GitHub-deploy action)
+successful CI from a main-branch push only
+   → deploy workflow → Poridhi VM over SSH → post-deploy API health check
 ```
 
-CI blocks merge on failure; CD triggers only on default-branch push, matching the rulebook requirement exactly.
+The repository workflow supplies the required CI status checks; GitHub branch protection must be configured to block merging when either job fails. CD is gated through `workflow_run`, so it cannot run until push-triggered CI on `main` succeeds.
 
 - **Why this:** Explicit rulebook requirement (CI on PR/push, CD on default-branch push only).
 - **Benefit:** Every push is a candidate for production, every PR must be green.

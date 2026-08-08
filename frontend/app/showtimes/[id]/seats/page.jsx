@@ -3,7 +3,8 @@ import { api } from "../../../lib/api";
 export const dynamic = "force-dynamic";
 
 export default async function SeatsPage({ params }) {
-  const showtimeId = parseInt(params.id, 10);
+  const { id } = await params;
+  const showtimeId = parseInt(id, 10);
   const { seats } = await api(`/showtimes/${showtimeId}/seats`);
 
   const grouped = seats.reduce((acc, s) => {
