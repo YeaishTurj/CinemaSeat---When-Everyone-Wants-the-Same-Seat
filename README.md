@@ -18,6 +18,21 @@ ever selling the same seat twice.
 > public IP and the entire account disappear when the 12-hour lab expires. The
 > repository remains fully reproducible from a clean clone.
 
+## Five-minute judge walkthrough
+
+| Time | Show | Main point |
+|---:|---|---|
+| `0:00` | Architecture diagram below | One modular API, one database authority, one deliberately unreliable external gateway. |
+| `0:45` | `docker compose ps` and `/health` | A clean clone starts four healthy containers; liveness does not depend on the gateway. |
+| `1:15` | `bash scripts/concurrent-holds.sh` | 100 buyers fight for one seat: 1 success, 99 conflicts, 0 oversells. |
+| `2:15` | Browser booking flow | Browse → seat → hold → OTP → asynchronous payment → confirmation. |
+| `3:45` | Duplicate/race tests | Raw-body HMAC, database deduplication, stable charge idempotency key. |
+| `4:30` | GitHub Actions | Required PR checks, protected `main`, then SSH deployment after green CI. |
+
+The shortest defence of the design is: **PostgreSQL serializes ownership of a
+contested seat; the API never keeps a database lock open while calling the
+gateway; every asynchronous callback is authenticated and idempotent.**
+
 ## What works
 
 - Seeded movies, theatres, showtimes, prices, and 120-seat screens.
@@ -39,22 +54,172 @@ ever selling the same seat twice.
 
 ```mermaid
 flowchart LR
-    U[Browser] -->|HTTP :3000| F[Next.js frontend]
-    F -->|/api rewrite| A[Express API :3000]
-    A --> C[Catalog module]
-    A --> S[Seat and hold module]
-    A --> B[Booking / OTP / payment modules]
-    C --> P[(PostgreSQL 16)]
-    S -->|row lock + transaction| P
+    U[Customer browser]
+
+    subgraph HOST[Docker Compose host / AWS EC2]
+        F[Next.js frontend<br/>public :3000]
+
+        subgraph API[Express modular monolith<br/>public :3001 / internal :3000]
+            R[Router + validation + request logging]
+            C[Catalog]
+            S[Seats + holds]
+            B[Bookings]
+            O[OTP]
+            Y[Payments + webhooks]
+            H[Dependency-free health]
+        end
+
+        P[(PostgreSQL 16<br/>seat source of truth)]
+        G[Provided unreliable gateway<br/>internal :9000]
+    end
+
+    U -->|pages and /api/*| F
+    F -->|Compose DNS: api:3000| R
+    R --> C
+    R --> S
+    R --> B
+    R --> O
+    R --> Y
+    R --> H
+    C --> P
+    S -->|FOR UPDATE| P
     B --> P
-    B -->|charge / OTP| G[Provided gateway :9000]
-    G -->|signed async webhooks| B
+    O --> P
+    Y --> P
+    O -->|OTP send / verify| G
+    Y -->|idempotent charge| G
+    G -. signed async callbacks .-> O
+    G -. signed async callbacks .-> Y
 ```
 
 This is a **modular monolith**, not a collection of microservices. The API has
 separate catalog, seats, bookings, OTP, payments, health, and shared-infrastructure
 modules, while one PostgreSQL transaction remains the authority for seat
 ownership. See [`DECISIONS.md`](./DECISIONS.md) for the reasoning and costs.
+
+### End-to-end booking sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as Customer
+    participant F as Next.js frontend
+    participant A as Express API
+    participant D as PostgreSQL
+    participant G as Provided gateway
+
+    U->>F: Choose movie, showtime, and seat
+    F->>A: GET /showtimes/:id/seats
+    A->>D: Read seat map
+    D-->>A: AVAILABLE / HELD / BOOKED
+    A-->>F: Live seat map
+
+    U->>F: Hold selected seat
+    F->>A: POST /holds
+    A->>D: BEGIN + SELECT ... FOR UPDATE
+    alt seat is available or hold expired
+        A->>D: UPDATE seat to HELD + COMMIT
+        A-->>F: 201 hold_id + expiry
+    else seat is already held or booked
+        A->>D: ROLLBACK
+        A-->>F: 409 conflict
+    end
+
+    F->>A: POST /bookings with hold_id
+    A->>D: Create PENDING booking + attach seat
+    A-->>F: 201 booking
+
+    F->>A: POST /bookings/:id/otp/send
+    A->>G: POST /otp/send
+    G-->>A: 202 accepted
+    G-->>A: Signed OTP callback after delay
+    A->>D: Update OTP session
+    F->>A: POST /bookings/:id/otp/verify
+    A->>G: POST /otp/verify
+    G-->>A: verified=true
+    A->>D: Mark OTP VERIFIED
+
+    F->>A: POST /bookings/:id/pay
+    A->>D: Commit local PENDING payment first
+    A->>G: POST /charge + Idempotency-Key
+    G-->>A: 202 PENDING
+    A-->>F: 202 PENDING immediately
+
+    Note over A,G: No database lock is held while waiting for the gateway
+    G-->>A: Signed SUCCEEDED / FAILED callback
+    A->>A: Verify HMAC over raw body
+    A->>D: INSERT event_id ON CONFLICT DO NOTHING
+    alt first SUCCEEDED delivery
+        A->>D: Confirm booking + mark only its seat BOOKED
+    else first FAILED delivery
+        A->>D: Cancel booking + release only its seat
+    else duplicate event_id
+        A->>D: No state transition
+    end
+    A-->>G: 200 acknowledged
+    F->>A: Poll GET /bookings/:id
+    A-->>F: CONFIRMED / CANCELLED / PENDING
+```
+
+### Seat lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> AVAILABLE: seeded
+    AVAILABLE --> HELD: atomic POST /holds
+    HELD --> AVAILABLE: TTL expires and next read/reclaim
+    HELD --> AVAILABLE: payment FAILED
+    HELD --> BOOKED: payment SUCCEEDED
+    BOOKED --> [*]
+
+    note right of HELD
+      A competing hold waits on the row lock.
+      It then receives 409 unless this hold expired.
+    end note
+```
+
+### Core data model
+
+```mermaid
+erDiagram
+    MOVIES ||--o{ SHOWTIMES : schedules
+    THEATRES ||--o{ SCREENS : contains
+    SCREENS ||--o{ SEATS : defines
+    SCREENS ||--o{ SHOWTIMES : hosts
+    SHOWTIMES ||--o{ SHOW_SEATS : exposes
+    SEATS ||--o{ SHOW_SEATS : identifies
+    SHOWTIMES ||--o{ BOOKINGS : receives
+    BOOKINGS o|--o{ SHOW_SEATS : owns
+    BOOKINGS ||--o| PAYMENTS : has
+    PAYMENTS ||--o{ PAYMENT_EVENTS : deduplicates
+
+    SHOW_SEATS {
+        int showtime_id FK
+        int seat_id FK
+        text status
+        text hold_id
+        timestamptz hold_expires_at
+        int booking_id FK
+    }
+    BOOKINGS {
+        int id PK
+        text user_ref
+        text status
+        numeric total_amount
+    }
+    PAYMENTS {
+        int id PK
+        int booking_id FK
+        text idempotency_key UK
+        text gateway_payment_id
+        text status
+    }
+    PAYMENT_EVENTS {
+        text event_id PK
+        int payment_id FK
+        text status
+    }
+```
 
 ### The no-oversell invariant
 
@@ -63,6 +228,16 @@ single `show_seats` row. Only `AVAILABLE` or expired `HELD` rows can transition
 to a new hold. Concurrent requests wait for that lock, observe the winner's
 unexpired hold, and return `409 CONFLICT`. The database also enforces a unique
 `(showtime_id, seat_id)` row.
+
+### Fast answers to likely questions
+
+| Judge question | Short answer | Detail |
+|---|---|---|
+| Why not microservices? | The correctness boundary is one seat transaction; splitting it would introduce distributed consistency without a measured need. | [Decision 2](./DECISIONS.md#2-modular-monolith-not-premature-microservices) |
+| Why PostgreSQL locks? | Lock state and seat state remain in one atomic system. | [Decision 1](./DECISIONS.md#1-postgresql-row-locks-not-redis-locks-or-optimistic-retries) |
+| What breaks first? | Hot-row lock queues or the 30-connection database pool; correctness remains intact while latency rises. | [Architecture](./ARCHITECTURE.md#18-failure-modes-summary-for-fast-defence) |
+| How are duplicate callbacks safe? | `event_id` is a database primary key and the state transition shares its transaction. | [Decision 3](./DECISIONS.md#3-acknowledge-signed-callbacks-and-make-processing-idempotent) |
+| What happens when the gateway dies? | Health, browsing, maps, and holds remain available; uncertain payment stays pending. | [Gateway behavior](#gateway-behavior-and-recovery) |
 
 ## Run from a clean clone
 
