@@ -40,29 +40,46 @@ export default function HoldForm({ showtimeId, seatId }) {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-3">
-      <input
-        className="w-full rounded bg-slate-800 p-2 text-slate-100"
-        placeholder="Your name or user_ref"
-        value={userRef}
-        onChange={(e) => setUserRef(e.target.value)}
-        required
-      />
-      <input
-        className="w-full rounded bg-slate-800 p-2 text-slate-100"
-        placeholder="Phone (+8801XXXXXXXXX)"
-        value={phone}
-        onChange={(e) => setPhone(e.target.value)}
-        required
-      />
+    <form onSubmit={submit} className="space-y-5">
+      <label className="block space-y-2">
+        <span className="text-sm font-medium text-slate-300">Your name</span>
+        <input
+          className="field"
+          placeholder="e.g. Zayan"
+          autoComplete="name"
+          value={userRef}
+          onChange={(e) => setUserRef(e.target.value)}
+          required
+        />
+      </label>
+      <label className="block space-y-2">
+        <span className="text-sm font-medium text-slate-300">Phone number</span>
+        <input
+          className="field"
+          placeholder="01700000000"
+          autoComplete="tel"
+          inputMode="tel"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          required
+        />
+      </label>
+      <p className="text-xs leading-5 text-slate-500">
+        Your seat is held only after this form succeeds. Complete OTP and
+        payment before the hold expires.
+      </p>
       <button
         type="submit"
         disabled={pending}
-        className="rounded bg-emerald-600 px-3 py-2 text-sm hover:bg-emerald-500 disabled:opacity-50"
+        className="btn-primary w-full"
       >
-        {pending ? "Holding…" : "Hold seat & book"}
+        {pending ? "Securing your seat…" : "Hold seat & continue"}
       </button>
-      {error && <p className="text-rose-400 text-sm">{error}</p>}
+      {error && (
+        <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/10 p-3 text-sm text-rose-300">
+          {error}
+        </p>
+      )}
     </form>
   );
 }

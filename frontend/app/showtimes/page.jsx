@@ -11,26 +11,51 @@ export default async function ShowtimesPage({ searchParams }) {
   }
   const { showtimes } = await api(`/showtimes?movie_id=${movieId}`);
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 p-8">
-      <h1 className="text-2xl font-bold mb-4">Showtimes</h1>
-      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <main className="page-shell">
+      <Link href="/" className="mb-6 inline-flex text-sm text-slate-400 hover:text-emerald-300">
+        ← Back to movies
+      </Link>
+      <div className="mb-8">
+        <div className="eyebrow mb-2">Movie #{movieId}</div>
+        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+          Choose a showtime
+        </h1>
+        <p className="mt-2 text-slate-400">
+          Select a theatre and time to view live seat availability.
+        </p>
+      </div>
+      <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {showtimes.map((s) => (
           <li
             key={s.id}
-            className="rounded-lg bg-slate-900 p-4 ring-1 ring-slate-800"
+            className="panel p-5 transition hover:-translate-y-0.5 hover:border-emerald-400/30"
           >
-            <div className="text-lg font-semibold">
-              {new Date(s.starts_at).toLocaleString()}
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-semibold">
+                  {new Date(s.starts_at).toLocaleDateString([], {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </div>
+                <div className="text-2xl font-bold text-emerald-400">
+                  {new Date(s.starts_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </div>
+              </div>
+              <span className="status-pill">BDT {s.base_price}</span>
             </div>
             <div className="text-sm text-slate-400">
               {s.theatre_name} · {s.screen_name}
             </div>
-            <div className="text-sm text-emerald-400">BDT {s.base_price}</div>
             <Link
-              className="mt-3 inline-block rounded bg-emerald-600 px-3 py-1.5 text-sm hover:bg-emerald-500"
+              className="btn-primary mt-5 w-full"
               href={`/showtimes/${s.id}/seats`}
             >
-              Choose seat →
+              Choose a seat <span aria-hidden>→</span>
             </Link>
           </li>
         ))}

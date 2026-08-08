@@ -136,9 +136,7 @@ export default function BookingFlow({ initialState }) {
         return;
       }
       if (!latest) {
-        setDevHint(
-          "No OTP has been delivered. Click Send OTP first.",
-        );
+        setDevHint("No OTP has been delivered. Click Send OTP first.");
       } else {
         setCode(latest);
         setDevHint(`Latest OTP: ${latest}`);
@@ -149,41 +147,80 @@ export default function BookingFlow({ initialState }) {
   }
 
   const otpStatus = state.otp?.status || "NONE";
+  const paymentStatus = state.payment?.status || "NOT_STARTED";
+  const steps = [
+    { label: "Seat held", done: true },
+    { label: "OTP verified", done: otpStatus === "VERIFIED" },
+    { label: "Payment", done: state.booking.status === "CONFIRMED" },
+  ];
 
   return (
-    <div className="space-y-6 max-w-md">
-      <div className="rounded bg-slate-900 p-4 ring-1 ring-slate-800">
-        <div className="text-sm text-slate-400">Total</div>
-        <div className="text-2xl font-semibold">
-          BDT {state.booking.total_amount}
+    <div className="space-y-5">
+      <ol className="grid grid-cols-3 gap-2" aria-label="Booking progress">
+        {steps.map((step, index) => (
+          <li
+            key={step.label}
+            className={`rounded-xl border px-3 py-3 text-center text-xs font-medium sm:text-sm ${
+              step.done
+                ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                : "border-white/10 bg-white/[0.03] text-slate-500"
+            }`}
+          >
+            <span className="mb-1 block text-[10px] uppercase tracking-wider opacity-70">
+              Step {index + 1}
+            </span>
+            {step.done ? "✓ " : ""}
+            {step.label}
+          </li>
+        ))}
+      </ol>
+
+      <div className="panel flex items-center justify-between gap-4 p-5">
+        <div>
+          <div className="text-sm text-slate-400">Order total</div>
+          <div className="mt-1 text-3xl font-bold tracking-tight">
+            <span className="text-base font-medium text-slate-500">BDT </span>
+            {state.booking.total_amount}
+          </div>
         </div>
-        <div className="text-xs text-slate-500">
-          Seats:{" "}
-          {state.seats
-            .map((s) => `${s.row_label}${s.seat_number}`)
-            .join(", ") || "—"}
+        <div className="text-right">
+          <div className="text-xs uppercase tracking-wider text-slate-500">
+            Seats
+          </div>
+          <div className="mt-1 font-semibold text-emerald-400">
+            {state.seats
+              .map((s) => `${s.row_label}${s.seat_number}`)
+              .join(", ") || "—"}
+          </div>
         </div>
       </div>
 
-      <div className="rounded bg-slate-900 p-4 ring-1 ring-slate-800">
-        <div className="font-semibold mb-2">OTP verification</div>
-        <div className="text-sm text-slate-400 mb-2">Status: {otpStatus}</div>
+      <div className="panel p-5 sm:p-6">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <div className="font-semibold">OTP verification</div>
+            <div className="mt-1 text-sm text-slate-400">
+              Confirm the phone number attached to this booking.
+            </div>
+          </div>
+          <span className="status-pill">{otpStatus}</span>
+        </div>
         {otpStatus === "NONE" && (
           <button
             disabled={pending}
             onClick={sendOtp}
-            className="rounded bg-emerald-600 px-3 py-1.5 text-sm hover:bg-emerald-500 disabled:opacity-50"
+            className="btn-primary"
           >
             Send OTP
           </button>
         )}
         {otpStatus === "PENDING" && (
           <div className="space-y-2">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 disabled={pending}
                 onClick={sendOtp}
-                className="rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600 disabled:opacity-50"
+                className="btn-secondary"
               >
                 {state.otp?.attempts > 0 ? "Resend OTP" : "Send OTP"}
               </button>
@@ -191,16 +228,22 @@ export default function BookingFlow({ initialState }) {
                 disabled={pending}
                 onClick={copyLatestOtp}
                 title="Dev helper: load the latest OTP from the mock gateway"
-                className="rounded bg-amber-600 px-3 py-1.5 text-sm hover:bg-amber-500 disabled:opacity-50"
+                className="inline-flex items-center justify-center rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-semibold text-amber-950 transition hover:bg-amber-300 disabled:opacity-50"
               >
                 Show latest OTP
               </button>
             </div>
-            {devHint && <div className="text-xs text-amber-300">{devHint}</div>}
-            <form onSubmit={verifyOtp} className="flex gap-2">
+            {devHint && (
+              <div className="rounded-lg bg-amber-400/10 px-3 py-2 text-xs text-amber-300">
+                {devHint}
+              </div>
+            )}
+            <form onSubmit={verifyOtp} className="flex flex-col gap-2 sm:flex-row">
               <input
-                className="flex-1 rounded bg-slate-800 p-2"
-                placeholder="Enter code"
+                className="field flex-1"
+                placeholder="6-digit OTP"
+                inputMode="numeric"
+                autoComplete="one-time-code"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 required
@@ -208,7 +251,7 @@ export default function BookingFlow({ initialState }) {
               <button
                 type="submit"
                 disabled={pending}
-                className="rounded bg-emerald-600 px-3 py-2 text-sm hover:bg-emerald-500 disabled:opacity-50"
+                className="btn-primary"
               >
                 Verify
               </button>
@@ -216,27 +259,49 @@ export default function BookingFlow({ initialState }) {
           </div>
         )}
         {otpStatus === "VERIFIED" && (
-          <div className="text-emerald-400 text-sm">Verified ✓</div>
+          <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-300">
+            ✓ Phone number verified successfully
+          </div>
         )}
       </div>
 
-      <div className="rounded bg-slate-900 p-4 ring-1 ring-slate-800">
-        <div className="font-semibold mb-2">Payment</div>
-        <div className="text-sm text-slate-400 mb-2">
-          Status: {state.payment?.status || "NOT_STARTED"}
+      <div className="panel p-5 sm:p-6">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <div className="font-semibold">Payment</div>
+            <div className="mt-1 text-sm text-slate-400">
+              The final result arrives asynchronously from the gateway.
+            </div>
+          </div>
+          <span className="status-pill">{paymentStatus}</span>
         </div>
-        {state.booking.status === "PENDING" && otpStatus === "VERIFIED" && (
-          <button
-            disabled={pending}
-            onClick={pay}
-            className="rounded bg-emerald-600 px-3 py-1.5 text-sm hover:bg-emerald-500 disabled:opacity-50"
-          >
-            Pay BDT {state.booking.total_amount}
-          </button>
+        {state.booking.status === "PENDING" &&
+          otpStatus === "VERIFIED" &&
+          paymentStatus !== "PENDING" && (
+            <button
+              disabled={pending}
+              onClick={pay}
+              className="btn-primary w-full sm:w-auto"
+            >
+              Pay BDT {state.booking.total_amount}
+            </button>
+          )}
+        {paymentStatus === "PENDING" && (
+          <div className="flex items-center gap-3 rounded-xl bg-sky-400/10 p-3 text-sm text-sky-300">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-sky-300/30 border-t-sky-300" />
+            Payment is processing. This page updates automatically.
+          </div>
+        )}
+        {otpStatus !== "VERIFIED" && (
+          <p className="text-sm text-slate-500">Verify OTP to unlock payment.</p>
         )}
       </div>
 
-      {error && <p className="text-rose-400 text-sm">{error}</p>}
+      {error && (
+        <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/10 p-3 text-sm text-rose-300">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

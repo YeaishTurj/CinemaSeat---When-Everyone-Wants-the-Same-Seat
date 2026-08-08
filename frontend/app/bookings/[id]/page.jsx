@@ -27,10 +27,28 @@ export default async function BookingPage({ params }) {
     );
   }
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 p-8">
-      <h1 className="text-2xl font-bold mb-1">Booking #{bookingId}</h1>
-      <p className="text-slate-400 mb-6">Status: {state.booking.status}</p>
-      <BookingFlow initialState={state} />
+    <main className="page-shell">
+      <div className="mx-auto max-w-2xl">
+        <Link href="/" className="mb-6 inline-flex text-sm text-slate-400 hover:text-emerald-300">
+          ← Back to movies
+        </Link>
+        <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <div className="eyebrow mb-2">Checkout</div>
+            <h1 className="text-3xl font-bold tracking-tight">
+              Booking #{bookingId}
+            </h1>
+            <p className="mt-2 text-slate-400">
+              Verify your phone, then complete payment.
+            </p>
+          </div>
+          <span className="status-pill">
+            <span className="h-2 w-2 rounded-full bg-amber-400" />
+            {state.booking.status}
+          </span>
+        </div>
+        <BookingFlow initialState={state} />
+      </div>
     </main>
   );
 }
