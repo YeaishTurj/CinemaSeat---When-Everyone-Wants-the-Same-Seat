@@ -7,8 +7,28 @@ export default function BookingFlow({ initialState }) {
   const [code, setCode] = useState("");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState(null);
+  const [devHint, setDevHint] = useState(null);
   const router = useRouter();
   const bookingId = initialState.booking.id;
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  async function loadLatestOtp({ wait = false } = {}) {
+    const attempts = wait ? 18 : 1;
+    for (let i = 0; i < attempts; i += 1) {
+      const res = await fetch(`/api/dev/otp-latest/bk_${bookingId}`, {
+        cache: "no-store",
+      });
+      if (res.status === 404) return null;
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.message || `helper returned ${res.status}`);
+      }
+      if (body.delivered) return String(body.code);
+      if (i < attempts - 1) await sleep(1000);
+    }
+    return "";
+  }
 
   // Poll every 2s while not confirmed/cancelled.
   useEffect(() => {
@@ -33,9 +53,24 @@ export default function BookingFlow({ initialState }) {
 
   function sendOtp() {
     setError(null);
+    setDevHint("Sending OTP…");
     startTransition(async () => {
       try {
-        await fetch(`/api/bookings/${bookingId}/otp/send`, { method: "POST" });
+        const sent = await fetch(`/api/bookings/${bookingId}/otp/send`, {
+          method: "POST",
+        });
+        const sentBody = await sent.json();
+        if (!sent.ok) throw new Error(sentBody.message || "OTP send failed");
+        setDevHint("OTP sent. Waiting for delivery…");
+        const latest = await loadLatestOtp({ wait: true });
+        if (latest) {
+          setCode(latest);
+          setDevHint(`Latest OTP: ${latest}`);
+        } else if (latest === null) {
+          setDevHint("OTP sent. Enter the code received on your phone.");
+        } else {
+          setDevHint("OTP was not delivered. Click Send OTP to try again.");
+        }
         const res = await fetch(`/api/bookings/${bookingId}`, {
           cache: "no-store",
         });
@@ -83,6 +118,30 @@ export default function BookingFlow({ initialState }) {
     });
   }
 
+  // Dev convenience: load the mock gateway's latest OTP through the API.
+  // The helper returns 404 when disabled in production.
+  async function copyLatestOtp() {
+    setError(null);
+    setDevHint(null);
+    try {
+      const latest = await loadLatestOtp();
+      if (latest === null) {
+        setDevHint("Dev OTP helper is disabled in this environment.");
+        return;
+      }
+      if (!latest) {
+        setDevHint(
+          "No OTP has been delivered. Click Send OTP first.",
+        );
+      } else {
+        setCode(latest);
+        setDevHint(`Latest OTP: ${latest}`);
+      }
+    } catch (e) {
+      setDevHint(`Could not reach dev helper: ${e.message}`);
+    }
+  }
+
   const otpStatus = state.otp?.status || "NONE";
 
   return (
@@ -114,13 +173,24 @@ export default function BookingFlow({ initialState }) {
         )}
         {otpStatus === "PENDING" && (
           <div className="space-y-2">
-            <button
-              disabled={pending}
-              onClick={sendOtp}
-              className="rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600 disabled:opacity-50"
-            >
-              Resend OTP
-            </button>
+            <div className="flex gap-2">
+              <button
+                disabled={pending}
+                onClick={sendOtp}
+                className="rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600 disabled:opacity-50"
+              >
+                {state.otp?.attempts > 0 ? "Resend OTP" : "Send OTP"}
+              </button>
+              <button
+                disabled={pending}
+                onClick={copyLatestOtp}
+                title="Dev helper: load the latest OTP from the mock gateway"
+                className="rounded bg-amber-600 px-3 py-1.5 text-sm hover:bg-amber-500 disabled:opacity-50"
+              >
+                Show latest OTP
+              </button>
+            </div>
+            {devHint && <div className="text-xs text-amber-300">{devHint}</div>}
             <form onSubmit={verifyOtp} className="flex gap-2">
               <input
                 className="flex-1 rounded bg-slate-800 p-2"

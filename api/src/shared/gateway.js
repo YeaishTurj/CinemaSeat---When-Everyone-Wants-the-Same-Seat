@@ -34,10 +34,15 @@ async function charge({
 }
 
 async function sendOtp({ phone, ref, callback_url }) {
+  const mockMode = process.env.OTP_MOCK_MODE;
   return axios.post(
     `${GATEWAY_URL}/otp/send`,
     { phone, ref, callback_url },
-    { timeout: TIMEOUT_MS, validateStatus: (s) => s >= 200 && s < 300 },
+    {
+      headers: mockMode ? { "X-Mock-Mode": mockMode } : {},
+      timeout: TIMEOUT_MS,
+      validateStatus: (s) => s >= 200 && s < 300,
+    },
   );
 }
 

@@ -11,6 +11,7 @@ const seats = require("./modules/seats/router");
 const bookings = require("./modules/bookings/router");
 const payments = require("./modules/payments/router");
 const otp = require("./modules/otp/router");
+const otpDev = require("./modules/otp/dev");
 
 function createApp() {
   const app = express();
@@ -41,6 +42,7 @@ function createApp() {
   app.use(catalog); // /movies, /showtimes, /showtimes/:id/seats
   app.use(seats); // /holds
   app.use(bookings); // /bookings...
+  app.use(otpDev); // /dev/otp-latest/:ref — dev-only
 
   // 404.
   app.use((req, res) => {

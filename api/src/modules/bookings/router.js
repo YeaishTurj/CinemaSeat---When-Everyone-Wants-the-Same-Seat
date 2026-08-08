@@ -299,7 +299,11 @@ router.post("/bookings/:id/otp/verify", async (req, res, next) => {
       }
       throw new GatewayError(`gateway /otp/verify failed: ${e.message}`);
     }
-    if (result.data && result.data.status === "VERIFIED") {
+    // The gateway contract returns { verified: true }; tolerate a status
+    // field too so the adapter remains compatible with older images.
+    const verified =
+      result.data?.verified === true || result.data?.status === "VERIFIED";
+    if (verified) {
       await query(
         `UPDATE otp_sessions SET status='VERIFIED', attempts = attempts + 1 WHERE ref = $1`,
         [ref],
@@ -310,7 +314,7 @@ router.post("/bookings/:id/otp/verify", async (req, res, next) => {
         [ref],
       );
     }
-    res.json({ ok: true, status: result.data?.status || "PENDING" });
+    res.json({ ok: true, status: verified ? "VERIFIED" : "PENDING" });
   } catch (e) {
     next(e);
   }

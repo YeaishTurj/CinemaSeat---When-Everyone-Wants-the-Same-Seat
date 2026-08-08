@@ -52,7 +52,10 @@ router.post(
     try {
       await handlePaymentEvent(payload, req);
     } catch (e) {
-      req.log?.error({ err: e.message, event: payload }, "webhook handler failed");
+      req.log?.error(
+        { err: e.message, event: payload },
+        "webhook handler failed",
+      );
       // Intentionally 200 — see ARCHITECTURE.md §10.1 (ack-and-log contract).
     }
     return res.status(200).end();
@@ -112,7 +115,7 @@ async function handlePaymentEvent(payload, req) {
         `UPDATE show_seats
             SET status = 'BOOKED',
                 booking_id = $1
-          WHERE showtime_id = (SELECT showtime_id FROM bookings WHERE id = $1)
+          WHERE booking_id = $1
             AND status = 'HELD'`,
         [bookingId],
       );
@@ -127,7 +130,7 @@ async function handlePaymentEvent(payload, req) {
             SET status = 'AVAILABLE',
                 hold_id = NULL,
                 booking_id = NULL
-          WHERE showtime_id = (SELECT showtime_id FROM bookings WHERE id = $1)
+          WHERE booking_id = $1
             AND status = 'HELD'`,
         [bookingId],
       );

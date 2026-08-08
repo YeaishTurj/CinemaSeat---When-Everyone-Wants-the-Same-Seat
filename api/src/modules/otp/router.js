@@ -55,7 +55,7 @@ router.post(
 );
 
 async function handleOtpEvent(payload, req) {
-  const { ref, code, status } = payload;
+  const { ref, status } = payload;
   if (!ref) return; // nothing we can do
 
   await withTx(async (client) => {
@@ -86,13 +86,21 @@ async function handleOtpEvent(payload, req) {
         [ref],
       );
     } else {
-      // DELIVERED — just bump attempts; status stays PENDING so the frontend
-      // knows the code is in flight.
+      // DELIVERED — bump attempts. The code remains gateway-owned; the
+      // dev-only helper reads it from the gateway's documented debug API.
       await client.query(
         `UPDATE otp_sessions
             SET status = 'PENDING',
                 attempts = attempts + 1
           WHERE ref = $1 AND status <> 'VERIFIED'`,
+        [ref],
+      );
+      // If the session row doesn't exist yet (race with /otp/send), create
+      // it. Same shape as the VERIFIED fallback above.
+      await client.query(
+        `INSERT INTO otp_sessions (ref, phone, status, attempts)
+              VALUES ($1, '', 'PENDING', 1)
+         ON CONFLICT (ref) DO NOTHING`,
         [ref],
       );
     }
