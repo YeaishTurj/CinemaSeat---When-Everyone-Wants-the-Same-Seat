@@ -107,7 +107,13 @@ export default function BookingFlow({ initialState }) {
     setError(null);
     startTransition(async () => {
       try {
-        await fetch(`/api/bookings/${bookingId}/pay`, { method: "POST" });
+        const paid = await fetch(`/api/bookings/${bookingId}/pay`, {
+          method: "POST",
+        });
+        const paidBody = await paid.json();
+        if (!paid.ok) {
+          throw new Error(paidBody.message || "payment could not be started");
+        }
         const r = await fetch(`/api/bookings/${bookingId}`, {
           cache: "no-store",
         });

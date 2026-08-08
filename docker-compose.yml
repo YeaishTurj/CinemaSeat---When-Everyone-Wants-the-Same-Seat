@@ -21,11 +21,12 @@ services:
         condition: service_healthy
     environment:
       - HOLD_TTL_SECONDS=${HOLD_TTL_SECONDS:-300}
-      - DATABASE_URL=${DATABASE_URL}
-      - GATEWAY_URL=${GATEWAY_URL}
-      - GATEWAY_SECRET=${GATEWAY_SECRET}
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/cinemaseat}
+      - GATEWAY_URL=${GATEWAY_URL:-http://gateway:9000}
+      - GATEWAY_SECRET=${GATEWAY_SECRET:-z2p-2026-secret}
       - ENABLE_DEV_OTP=${ENABLE_DEV_OTP:-true}
       - OTP_MOCK_MODE=${OTP_MOCK_MODE:-deterministic}
+      - GATEWAY_MOCK_MODE=${GATEWAY_MOCK_MODE:-deterministic}
       - PORT=3000
 
   postgres:

@@ -177,12 +177,14 @@ router.post("/bookings/:id/pay", async (req, res, next) => {
     // 2 + 3. Call gateway, retry once on 5xx / timeout.
     const callbackUrl = "http://api:3000/webhooks/payment";
     const idempotencyKey = `bk_${bookingId}`;
+    const mockForce = req.get("X-Mock-Force") || undefined;
     const callOnce = () =>
       charge({
         amount: Number(payment.amount),
         booking_ref: idempotencyKey,
         callback_url: callbackUrl,
         idempotencyKey,
+        mock: { force: mockForce },
       });
     try {
       await callOnce();
@@ -193,7 +195,16 @@ router.post("/bookings/:id/pay", async (req, res, next) => {
         e.code === "ETIMEDOUT" ||
         e.message?.includes("timeout");
       if (isServerErr || isTimeout) {
-        await callOnce(); // retry once
+        try {
+          await callOnce(); // retry once with the same idempotency key
+        } catch (retryError) {
+          // The charge may have reached the gateway. Preserve PENDING and
+          // return 202 so a late callback can still finish the booking.
+          req.log?.warn(
+            { err: retryError.message, bookingId },
+            "gateway retry exhausted; payment remains pending",
+          );
+        }
       } else if (e.response) {
         // 4xx from gateway — surface as GatewayError so the frontend sees a clean error.
         throw new GatewayError(`gateway rejected: ${e.response.status}`);

@@ -17,13 +17,18 @@ async function charge({
   idempotencyKey,
   mock = {},
 }) {
+  // Force scenarios must run without deterministic mode; the provided
+  // gateway gives deterministic success precedence over some force values.
+  const mockMode = mock.force
+    ? undefined
+    : mock.mode || process.env.GATEWAY_MOCK_MODE;
   return axios.post(
     `${GATEWAY_URL}/charge`,
     { amount, currency, booking_ref, callback_url },
     {
       headers: {
         "Idempotency-Key": idempotencyKey,
-        ...(mock.mode ? { "X-Mock-Mode": mock.mode } : {}),
+        ...(mockMode ? { "X-Mock-Mode": mockMode } : {}),
         ...(mock.force ? { "X-Mock-Force": mock.force } : {}),
       },
       timeout: TIMEOUT_MS,
