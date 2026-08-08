@@ -60,4 +60,37 @@ describe("POST /holds concurrency", () => {
       Date.now(),
     );
   }, 30000);
+
+  it("shows an expired hold as available and lets another buyer claim it", async () => {
+    const originalTtl = process.env.HOLD_TTL_SECONDS;
+    process.env.HOLD_TTL_SECONDS = "1";
+    try {
+      const first = await request(app)
+        .post("/holds")
+        .send({ showtime_id: showtimeId, seat_id: seatId });
+      expect(first.status).toBe(201);
+
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+
+      const seatMap = await request(app).get(`/showtimes/${showtimeId}/seats`);
+      const seat = seatMap.body.seats.find((item) => item.seat_id === seatId);
+      expect(seat).toMatchObject({ status: "AVAILABLE", hold_expires_at: null });
+
+      const second = await request(app)
+        .post("/holds")
+        .send({ showtime_id: showtimeId, seat_id: seatId });
+      expect(second.status).toBe(201);
+      expect(second.body.hold_id).not.toBe(first.body.hold_id);
+
+      const booking = await request(app).post("/bookings").send({
+        hold_id: second.body.hold_id,
+        user_ref: `second-buyer-${Date.now()}`,
+      });
+      expect(booking.status).toBe(201);
+      expect(booking.body.booking.user_ref).toMatch(/^second-buyer-/);
+    } finally {
+      if (originalTtl === undefined) delete process.env.HOLD_TTL_SECONDS;
+      else process.env.HOLD_TTL_SECONDS = originalTtl;
+    }
+  });
 });
