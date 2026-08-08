@@ -5,7 +5,6 @@
 set -euo pipefail
 
 API="${API:-http://localhost:3001}"
-GW_PORT="${GW_PORT:-3000}"
 
 step() { printf "\n\033[1;34m== %s ==\033[0m\n" "$*"; }
 
@@ -30,25 +29,26 @@ HOLD=$(curl -fsS -X POST $API/holds -H 'Content-Type: application/json' \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['hold_id'])")
 echo "hold_id=$HOLD"
 
-step "3. booking (creates payment row + otp session, calls /charge)"
+step "3. booking (creates the booking and OTP session)"
 BK=$(curl -fsS -X POST $API/bookings -H 'Content-Type: application/json' \
   -d "{\"hold_id\":\"$HOLD\",\"user_ref\":\"demo-user\",\"phone\":\"+8801700000099\"}" \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['booking']['id'])")
 echo "booking_id=$BK"
 
-step "4. otp send (retry up to 5x — gateway has a 'never delivered' chaos mode)"
+step "4. otp send (retry up to 5x — gateway can silently lose delivery)"
 CODE=""
 for i in 1 2 3 4 5; do
-  BEFORE=$(docker compose logs --no-color gateway 2>&1 | grep -c "OTP " || true)
   curl -fsS -X POST $API/bookings/$BK/otp/send -H 'Content-Type: application/json' \
     -d '{"phone":"+8801700000099"}' >/dev/null
-  sleep 2
-  AFTER=$(docker compose logs --no-color gateway 2>&1 | grep -c "OTP " || true)
-  if [ "$AFTER" -gt "$BEFORE" ]; then
-    CODE=$(docker compose logs --no-color gateway 2>&1 | grep -E "ref=bk_$BK " | tail -1 | grep -oE "code=[0-9]+" | cut -d= -f2)
-    echo "delivered code=$CODE on attempt $i"
-    break
-  fi
+  for _ in 1 2 3 4 5; do
+    sleep 1
+    CODE=$(curl -fsS "$API/dev/otp-latest/bk_$BK" | \
+      python3 -c "import sys,json; print(json.load(sys.stdin).get('code') or '')")
+    if [ -n "$CODE" ]; then
+      echo "delivered code=$CODE on attempt $i"
+      break 2
+    fi
+  done
 done
 [ -n "$CODE" ] || { echo "no OTP delivered after 5 attempts"; exit 1; }
 
@@ -80,4 +80,4 @@ docker compose exec -T postgres psql -U postgres -d cinemaseat -At -c \
    SELECT 'event '||event_id||' '||status FROM payment_events;"
 
 step "9. UI"
-echo "open http://localhost:3000/movies"
+echo "open http://localhost:3000"

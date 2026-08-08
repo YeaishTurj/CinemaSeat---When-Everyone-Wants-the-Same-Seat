@@ -2,7 +2,7 @@
 
 **Event:** Zero to Production · Phase 2 · IEEECS CUET (8 Aug 2026, 9:00 AM – 8:00 PM)
 **Reference:** `ARCHITECTURE.md` (design), `CinemaSeat_Problem_Statement.pdf` (what), `CinemaSeat_Gateway_Reference.pdf` (gateway contract), `Zero_to_Production_Rulebook.pdf` (rules + scoring)
-**Stack:** Next.js 16 + React 19 (JS), Node.js + Express (JS), PostgreSQL (raw SQL via `pg`), Docker / Docker Compose, GitHub Actions, Poridhi VM
+**Stack:** Next.js 16 + React 19 (JS), Node.js + Express (JS), PostgreSQL (raw SQL via `pg`), Docker / Docker Compose, GitHub Actions, Poridhi-provided AWS EC2
 **Build method:** AI-agent-implemented, human-understood and human-defended (rulebook §6.3)
 
 ---
@@ -27,7 +27,7 @@
 | 4 | **Full booking flow** | 13:30 – 15:00 | browse → seat map → hold → OTP → pay → confirm works end-to-end | Manual demo from `docker compose up` succeeds |
 | 5 | **Webhook hardening** | 15:00 – 16:00 | HMAC verification, duplicate dedup, race handling, 2xx-on-duplicate | `/debug/deliveries` shows `ok:true`; duplicate test passes |
 | 6 | **Containerisation + CI** | 16:00 – 17:00 | Multi-stage Dockerfiles, CI green on PR | GitHub Actions badge green; image size sane |
-| 7 | **Deployment** | 17:00 – 18:00 | Stack live on Poridhi VM, public URL | Judge can hit the URL and reserve a seat |
+| 7 | **Deployment** | 17:00 – 18:00 | Stack live on AWS EC2, public URL | Judge can hit the URL and reserve a seat |
 | 8 | **Proof + docs** | 18:00 – 18:30 | Scenario A report, Scenario B report, README, DECISIONS.md | All four deliverables in the repo |
 
 ---
@@ -656,7 +656,7 @@ describe('POST /webhooks/payment', () => {
 
 > **Implemented and verified locally and on GitHub on 8 August 2026.** Both images are
 > multi-stage/non-root, lockfiles are committed, real lint replaces placeholder
-> scripts, all six API tests pass against PostgreSQL, the Next.js production
+> scripts, all seven API tests pass against PostgreSQL, the Next.js production
 > build passes, and Compose health checks are green. Measured images: API
 > 49.9 MB, frontend 63.8 MB. The push CI and SSH deployment workflows passed,
 > and the protected `main` ruleset requires both CI jobs before merging.
@@ -810,18 +810,18 @@ and force-pushes, requires pull requests, and requires the
 
 ## 9. Phase 7 — Deployment (17:00 – 18:00)
 
-**Goal:** Stack live on Poridhi VM, reachable at a public URL.
+**Goal:** Stack live on the Poridhi-provided AWS EC2 instance, reachable at a public URL.
 
-### 9.1 Poridhi VM setup (one-time)
+### 9.1 AWS EC2 setup (one-time)
 
-1. Launch lab at 09:00 AM (rulebook §5)
-2. SSH into the VM
+1. Launch the Poridhi AWS lab and an Ubuntu 24.04 EC2 instance
+2. Allow SSH plus public frontend/API ports in its security group
 3. Install Docker + Compose v2
 4. Clone the repo
-5. `cp .env.example .env`, fill in `GATEWAY_SECRET`
+5. Configure the three GitHub SSH secrets
 6. `docker compose up -d --build`
-7. Verify `curl http://localhost:3000/health` from the VM
-8. Use Poridhi's load balancer to expose `http://localhost:3000` at a public URL
+7. Verify `curl http://localhost:3001/health` from the VM
+8. Verify the public frontend and API health URLs
 
 ### 9.2 Production `docker-compose.yml` overlay
 
@@ -829,17 +829,17 @@ Same `docker-compose.yml` works in production. The only difference is the api co
 
 ### 9.3 Done-when checklist
 
-- [ ] Public URL returns 200 on `/health` in <1s
-- [ ] Judge can run the full demo at the public URL (browse → seat → hold → OTP → pay → confirm)
+- [x] Public URL returns 200 on `/health` in <1s
+- [x] Judge can run the full demo at the public URL (browse → seat → hold → OTP → pay → confirm)
 - [ ] Public URL works with the gateway container stopped (bonus — fault isolation)
-- [ ] No localhost references anywhere in `callback_url` (the gateway reference's one-bug-everybody-makes)
+- [x] No localhost references anywhere in `callback_url` (the gateway reference's one-bug-everybody-makes)
 
-### 9.4 If time remains — AWS bonus
+### 9.4 AWS bonus result
 
-- AMI with Docker pre-installed
-- ALB → ECS Fargate (or EC2) for api + frontend
-- RDS for Postgres
-- Same Docker images, same env vars, no architecture change
+- [x] Ubuntu EC2 deployment in the Poridhi-provided AWS account
+- [x] Automated deployment over SSH after successful `main` CI
+- [x] Same Compose images, environment contract, and health checks as local
+- [ ] ALB, RDS, and multiple application instances (deliberately out of scope)
 
 ---
 
@@ -945,12 +945,12 @@ Three decisions, each with: options considered, what we chose, why, what we gave
 
 ### 10.6 Done-when checklist
 
-- [ ] `docs/scenarioA.md` shows 1 success / 99 conflicts / 0 oversell
-- [ ] `docs/scenarioB.md` shows the timeline and the second user's success
+- [x] `docs/scenarioA.md` shows 1 success / 99 conflicts / 0 oversell
+- [x] `docs/scenarioB.md` shows the timeline and the second user's success
 - [ ] `docs/scenarioC.md` (if attempted) names the bottleneck
-- [ ] `README.md` lists the two exact request shapes
-- [ ] `DECISIONS.md` documents the three decisions
-- [ ] `docker compose up` from a clean clone still works (judging hook #4)
+- [x] `README.md` lists the two exact request shapes
+- [x] `DECISIONS.md` documents the three decisions
+- [x] `docker compose up` from a clean clone still works (judging hook #4)
 
 ---
 
@@ -982,7 +982,7 @@ Three decisions, each with: options considered, what we chose, why, what we gave
 | 14:30 | Phase 4 done (full flow works end-to-end) |
 | 16:00 | Phase 5 done (webhook hardening) |
 | 16:00 | Phase 6 done (containerisation + CI green) |
-| 17:30 | Phase 7 done (deployed to Poridhi VM) |
+| 17:30 | Phase 7 done (deployed to AWS EC2) |
 | 18:00 | Phase 8 done (reports + README + DECISIONS.md) |
 | 18:30 | Code freeze |
 | 18:30 – 19:45 | Presentation + defence |
@@ -1012,7 +1012,7 @@ Three decisions, each with: options considered, what we chose, why, what we gave
 | Webhook verification fails because of a global JSON middleware | `express.raw()` only on `/webhooks/*`; ESLint rule prevents global JSON on those routes |
 | Hold expiry leaks seats | `hold_expires_at < now()` check in every read of `show_seats` |
 | Frontend spins forever on OTP loss | Explicit "no code yet" state with Resend action |
-| Poridhi VM dies mid-event | 100% reproducible from clean clone; designated infra owner |
+| Temporary AWS EC2 account expires mid-event | 100% reproducible from clean clone; designated infra owner |
 | Run out of time | Drop Scenario C first, then the OG explicitly mentioned "smaller system that never double-books beats a larger one with a race condition" |
 
 ---

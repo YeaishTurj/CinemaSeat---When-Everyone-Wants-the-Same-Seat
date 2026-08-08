@@ -1,7 +1,7 @@
 # CinemaSeat — System Architecture Document
 
 **Event:** Zero to Production · Phase 2 · IEEECS CUET (8 Aug 2026)
-**Stack:** Next.js 16 + React 19 (JS), Node.js + Express (JS), PostgreSQL (raw SQL via `pg`), Docker / Docker Compose, GitHub Actions, Poridhi VM
+**Stack:** Next.js 16 + React 19 (JS), Node.js + Express (JS), PostgreSQL (raw SQL via `pg`), Docker / Docker Compose, GitHub Actions, Poridhi-provided AWS EC2
 **Build method:** AI-agent-implemented, human-understood and human-defended (rulebook §6.3 — every member must be able to explain the system regardless of who typed it)
 
 ---
@@ -40,9 +40,9 @@ CinemaSeat's entire engineering challenge reduces to one sentence: **when 100 pe
 | ---------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | System Architecture & Design | 25     | Modular monolith with explicit module boundaries (§6), relational schema built around the concurrency problem (§7), data model + locking in one sentence (§8)        |
 | Functionality & Completeness | 25     | Full flow: browse → seat map → hold → OTP → pay → confirm, with hold-expiry and duplicate-safe payment (§9), every gateway misbehaviour mapped to a mitigation (§10) |
-| Code Quality & Testing       | 15     | Raw SQL on the critical path (no ORM magic to hide behaviour); tests target exactly Scenario A / B / C (§15)                                                         |
+| Code Quality & Testing       | 15     | Raw SQL on the critical path (no ORM magic to hide behaviour); tests cover required Scenarios A/B plus gateway failure paths (§15)                                   |
 | Containerization & CI        | 15     | Single `docker compose up` from clean clone, GitHub Actions on push/PR (§11–§13)                                                                                     |
-| Deployment                   | 10     | Poridhi VM primary path, reproducible from clean clone (§14)                                                                                                         |
+| Deployment                   | 10     | Poridhi-provided AWS EC2, SSH CD, and reproducibility from a clean clone (§14)                                                                                        |
 | Documentation                | 5      | This document + `README.md` + `DECISIONS.md`                                                                                                                         |
 | Presentation & Defence       | 5      | Every decision below has the five-part shape so any question maps to a known answer (§0, §16)                                                                        |
 
@@ -93,7 +93,7 @@ CinemaSeat's entire engineering challenge reduces to one sentence: **when 100 pe
 ### 3.6 Containers — Docker + Docker Compose
 
 - **Why this:** Explicit requirement (rulebook §8, problem statement Milestone 2/3). One command must bring up frontend, api, postgres, and the provided gateway.
-- **Benefit:** Identical environment for local dev, CI, Poridhi VM, and the judge's machine. Reproducible from clean clone.
+- **Benefit:** Identical environment for local development, CI, AWS EC2, and the judge's machine. Reproducible from a clean clone.
 - **Problem it solves:** Engineering Expectations Checklist — _"a working Dockerfile per service and a root docker-compose.yml that brings the whole stack up in one command."_
 - **When it can fail:** Image pulls on event-day venue Wi-Fi with 25 teams doing it simultaneously (gateway reference §"Run it"). Slow build times inside CI if layer caching is misconfigured.
 - **Future if it fails:** Pre-pull the gateway image on day-zero; use multi-stage builds with layer caching; pin base images to specific versions to avoid surprise breakage.
@@ -104,7 +104,7 @@ CinemaSeat's entire engineering challenge reduces to one sentence: **when 100 pe
 - **Benefit:** Free, integrated with the repo, change-aware workflows possible.
 - **Problem it solves:** Containerization & CI criterion — _"a functioning CI pipeline that builds and tests on push."_
 - **When it can fail:** Flaky concurrency tests in CI under resource constraints; long image-build times if caching isn't set up; secrets leaking into logs.
-- **Future if it fails:** Add a Postgres service container to CI; cache Docker layers with `actions/cache`; pin action versions; restrict secret access per environment.
+- **Future if it fails:** Keep the existing PostgreSQL service container, add Docker layer caching, pin actions by digest, and restrict secret access per environment.
 
 ### 3.8 Testing — Jest + Supertest
 
@@ -112,15 +112,15 @@ CinemaSeat's entire engineering challenge reduces to one sentence: **when 100 pe
 - **Benefit:** Familiar API, fast enough for a tight feedback loop.
 - **Problem it solves:** Code Quality & Testing criterion — _"unit tests for core logic, especially the concurrency and duplicate-callback paths."_
 - **When it can fail:** Concurrency tests using timers/mocks can be flaky. A real Postgres in CI is required for honest concurrency tests; SQLite would lie.
-- **Future if it fails:** Add a `services: postgres:` block to the GitHub Actions job so concurrency tests run against real Postgres. Add k6 scripts for Scenario A/B/C (§15).
+- **Future if it fails:** Keep the existing real PostgreSQL CI service, tune the concurrency count only if runner variance appears, and add a separate k6 job for optional Scenario C (§15).
 
-### 3.9 Deployment — Poridhi VM (primary), AWS (bonus)
+### 3.9 Deployment — AWS EC2 through the Poridhi lab
 
-- **Why this:** Same score as AWS per the rulebook; far fewer failure points on an 8-hour build clock. AWS is attempted only if the Poridhi deployment is confirmed working.
-- **Benefit:** Less IAM/security-group setup risk; faster to live.
-- **Problem it solves:** Deployment criterion (10 pts) without burning the budget on infra.
-- **When it can fail:** Poridhi lab clock is not idle-tolerant — the 12-hour lab disappears mid-event if launched late or stopped.
-- **Future if it fails:** Launch at 9:00 AM sharp per the rulebook; designate one infrastructure owner; keep deployment 100% reproducible from a clean clone so a lost VM is just `docker compose up` on a fresh one.
+- **Why this:** The provided AWS account was available and earns the optional AWS credit while the application still fits safely on one Docker Compose host.
+- **Benefit:** A public, judge-reachable deployment with the same images and topology used locally, plus automatic SSH deployment after green CI.
+- **Problem it solves:** Deployment criterion (10 pts) and the AWS bonus without introducing ECS/RDS during the build window.
+- **When it can fail:** The Poridhi lab and AWS account expire after 12 hours; the auto-assigned public IP can change after a stop/start; a single EC2 instance is not highly available.
+- **Future if it fails:** Provision with Terraform, attach a stable address/domain and TLS, publish images to a registry, and move PostgreSQL to RDS before adding multiple application instances.
 
 ---
 
@@ -511,29 +511,33 @@ Pull request / push
    → unit + integration tests (Jest/Supertest) — concurrency test against real Postgres
    → docker build (frontend, api)
 successful CI from a main-branch push only
-   → deploy workflow → Poridhi VM over SSH → post-deploy API health check
+   → deploy workflow → AWS EC2 over SSH → post-deploy API health check
 ```
 
-The repository workflow supplies the required CI status checks; GitHub branch protection must be configured to block merging when either job fails. CD is gated through `workflow_run`, so it cannot run until push-triggered CI on `main` succeeds.
+The repository workflow supplies the required CI status checks; the active GitHub ruleset blocks merging when either job fails. CD is gated through `workflow_run`, so it cannot run until push-triggered CI on `main` succeeds.
 
 - **Why this:** Explicit rulebook requirement (CI on PR/push, CD on default-branch push only).
 - **Benefit:** Every push is a candidate for production, every PR must be green.
 - **Problem it solves:** Containerization & CI criterion (15 pts).
 - **When it can fail:** Flaky concurrency tests in CI (the same `FOR UPDATE` test that's deterministic locally can behave differently under CI's resource constraints).
-- **Future if it fails:** Run the concurrency test against a real Postgres service container in CI (not SQLite or a mock), keep the test's concurrency count modest (e.g., 20 not 100) so CI stays fast, and reserve the full 100-request burst for the manual Scenario A report.
+- **Future if it fails:** Keep the existing real PostgreSQL service and 100-request collision test, then isolate runner variance with timing diagnostics or a dedicated test database rather than weakening the invariant.
 
 ---
 
 ## 14. Deployment
 
-- **Primary path:** Poridhi VM + load balancer. Fewer moving parts than AWS, same score, faster to get live — the right call given a fixed 8-hour build window on a 12-hour disposable lab.
-- **Bonus path:** AWS, attempted only after the Poridhi deployment is confirmed working — ALB → container → RDS Postgres, same modular monolith, no architecture change required to move between them.
+- **Implemented path:** Ubuntu 24.04 on a Poridhi-provided AWS EC2 instance.
+  Docker Compose runs frontend, API, PostgreSQL, and the required gateway on
+  the same host; ports 3000 and 3001 expose the demo and health endpoint.
+- **Delivery:** A successful push-triggered CI run on protected `main` starts
+  the SSH workflow. It fast-forwards `~/cinemaseat`, rebuilds Compose, and
+  executes an in-container API health check.
 
-- **Why this:** Same score as AWS per the rulebook; far fewer failure points.
-- **Benefit:** Less IAM / security-group setup risk; faster to live; the deployment is reproducible from a clean clone.
-- **Problem it solves:** Deployment criterion (10 pts).
-- **When it can fail:** Poridhi lab clock is not idle-tolerant — if the infrastructure owner's lab isn't launched at 9:00 AM sharp, the VM disappears mid-event with no extension.
-- **Future if it fails:** Designate the infra owner explicitly, launch at 9:00 AM during the opening session, and keep the deployment 100% reproducible from a clean clone (no hand-edited server state) so a lost VM just means re-running `docker compose up` on a fresh one.
+- **Why this:** It is the smallest AWS topology that can be completed and defended in the event window.
+- **Benefit:** The deployment uses exactly the same committed artifacts as local and CI environments and can be recreated from a clean clone.
+- **Problem it solves:** Deployment criterion (10 pts) plus the AWS bonus.
+- **When it can fail:** It is a disposable 12-hour account, has a changing public IP after stop/start, and has no rolling deployment or redundant node.
+- **Future if it fails:** Add infrastructure as code, registry-backed immutable images, HTTPS/domain routing, RDS, and at least two application instances behind an ALB.
 
 ---
 
@@ -569,14 +573,14 @@ The rulebook gives us a checklist that maps directly to scoring rows. Here is ho
 
 | Area                 | Expectation                                                         | Where it's satisfied                                                                                        |
 | -------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **Design**           | Modular, well-organised, no single-file monolith                    | §6 — six modules under `modules/`; rule enforced by ESLint `no-restricted-imports`                          |
-| **APIs**             | Consistent, predictable endpoints with sensible status codes        | §11 — minimum viable surface; uniform `{ok, data, error}` response shape from `shared/errors`               |
-| **Reliability**      | Input validation on every entry point; errors handled and logged    | `shared/errors` middleware; structured logger with request ID in `shared/logger`; Joi/Zod schemas per route |
+| **Design**           | Modular, well-organised, no single-file monolith                    | §6 — six explicit modules under `api/src/modules/`                                                          |
+| **APIs**             | Consistent, predictable endpoints with sensible status codes        | §11 — minimum viable surface; errors use `{ok:false, code, message}`                                        |
+| **Reliability**      | Input validation on every entry point; errors handled and logged    | Route-level validation, `shared/errors` middleware, structured request logs                                |
 | **Configuration**    | All env-specific values in env vars, `.env.example` committed       | §12.3; `process.env.*` everywhere with defaults; `.env.example` lists every key                             |
 | **Testing**          | Unit tests over core logic; depth over count                        | §15 — seven tests, all on critical paths                                                                    |
 | **Containerization** | Dockerfile per service; root `docker-compose.yml` brings stack up   | §12 — `frontend/Dockerfile`, `api/Dockerfile`, root `docker-compose.yml`                                    |
 | **CI**               | GitHub Actions builds image and runs tests on every push            | §13                                                                                                         |
-| **Deployment**       | App deployed and reachable at a public URL                          | §14 — Poridhi VM primary path                                                                               |
+| **Deployment**       | App deployed and reachable at a public URL                          | §14 — Poridhi-provided AWS EC2                                                                              |
 | **Documentation**    | README with architecture, setup, deployment, API                    | This file + `README.md` + `DECISIONS.md`                                                                    |
 | **Version control**  | Frequent, meaningful commits; branches/PRs as workflow calls for it | Repo policy — commit early and often (rulebook §6.2 explicitly)                                             |
 
@@ -600,12 +604,12 @@ These are the three arguments a judge is most likely to interrupt with. Each is 
 - **Why:** Domain is small, clock is 8 hours. A service boundary at the seats/payments interface would force us to solve distributed transactions on the hardest problem in the spec.
 - **What we gave up:** Independent scaling of, say, catalog reads from seat writes. Not needed at this traffic profile.
 
-### 17.3 Raw SQL vs. ORM
+### 17.3 Idempotent callback handling vs. retry-driven processing
 
-- **Chosen:** Raw `pg` queries, no ORM (§3.5).
-- **Rejected:** Prisma, Drizzle, TypeORM.
-- **Why:** The `FOR UPDATE` query must be visible, exact, and defensible by every team member. An ORM is one more layer to explain "what it's actually doing under the hood." You said you're not ORM-fluent — and the rulebook §6.3 explicitly punishes code nobody can explain.
-- **What we gave up:** More boilerplate on routine CRUD (movies / showtimes / theatres lists). The trade-off is fine: those endpoints are non-critical, the boilerplate is mechanical, and the critical endpoint (`POST /holds`) is exactly what raw SQL makes readable.
+- **Chosen:** Verify raw-body HMAC, persist `event_id` as a primary key, process in one transaction, and acknowledge accepted duplicates.
+- **Rejected:** In-memory deduplication or returning non-2xx for every internal processing failure.
+- **Why:** The gateway deliberately duplicates and races callbacks; database arbitration works across workers and avoids an eight-attempt retry storm.
+- **What we gave up:** An accepted event that fails internally is logged but not redelivered. A production successor needs a durable inbox and reconciliation worker.
 
 ---
 
@@ -613,19 +617,19 @@ These are the three arguments a judge is most likely to interrupt with. Each is 
 
 | Area         | Failure mode                                      | Present mitigation                                                                               | Future if given more time                                                |
 | ------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| Seat locking | Pool exhaustion under extreme burst               | Short transactions, statement timeout                                                            | Sharded writers per showtime, connection pooler (PgBouncer)              |
-| Seat locking | Long-held transaction blocks the row queue        | Keep `FOR UPDATE` block minimal; statement timeout                                               | Split read and write pools; move hold-write off the request path         |
+| Seat locking | Pool exhaustion under extreme burst               | Pool capped at 30; lock transaction contains only check/update                                   | Add statement timeout and PgBouncer                                      |
+| Seat locking | Long-held transaction blocks the row queue        | Keep the `FOR UPDATE` block minimal                                                              | Add lock/statement timeouts and contention metrics                       |
 | Seat locking | Single Postgres instance ceiling                  | N/A — matches current traffic profile                                                            | Read replicas for catalog reads; keep writes single-instance             |
 | Payment      | Callback never arrives                            | None yet — booking stuck PENDING                                                                 | Reconciliation polling job against gateway debug/status endpoint         |
-| Payment      | Gateway down entirely                             | `/charge` failure returns clean error, doesn't crash handler                                     | Circuit breaker + queued retry once gateway health recovers              |
+| Payment      | Gateway down entirely                             | Payment remains `PENDING`; health, catalog, maps, and holds stay available                       | Circuit breaker + queued retry once gateway health recovers              |
 | Payment      | Callback arrives before `/charge` returns         | Payment row keyed on `booking_id` before gateway call                                            | Idempotency layer upgrades to a saga pattern if cross-service            |
-| Webhook      | Non-2xx response triggers 8× exponential retries  | Always return 2xx; top-level try/catch around handler                                            | Move to a queue with decoupled ack                                       |
-| Webhook      | HMAC verification breaks (raw body re-serialised) | `express.raw()` only on `/webhooks/*`; lint rule prevents global JSON middleware on those routes | Live secret rotation                                                     |
-| OTP          | Silently lost (10% documented)                    | None yet                                                                                         | Visible resend action, cooldown, explicit "no code" UI state             |
-| Hold expiry  | Seat-map read doesn't reflect expiry              | Apply `hold_expires_at < now()` check in seat-map query                                          | Active sweep job with audit log if traffic justifies it                  |
+| Webhook      | Non-2xx response triggers 8× exponential retries  | Accepted duplicates/errors return 200; invalid signatures return 401                             | Move to a durable inbox with decoupled ack                               |
+| Webhook      | HMAC verification breaks (raw body re-serialised) | Webhook routers mount before `express.json()` and use `express.raw()`; integration test covers it | Live secret rotation                                                     |
+| OTP          | Silently lost (10% documented)                    | Visible resend action and explicit no-delivery state; demo helper uses gateway debug API         | Cooldown, rate limiting, and a real SMS delivery channel                 |
+| Hold expiry  | Seat-map read doesn't reflect expiry              | Seat-map query normalizes expired holds; next contender atomically reclaims the row               | Active sweep job with audit log if traffic justifies it                  |
 | Container    | Image pulls fail on event-day Wi-Fi               | Pre-pull on day-zero                                                                             | Pin image digests, not tags                                              |
-| CI           | Flaky concurrency test under CI resource limits   | Reduced concurrency count in CI vs. manual report (20 vs. 100)                                   | Dedicated CI Postgres service container, retry-once policy               |
-| Deployment   | Poridhi lab clock runs out mid-event              | Launch at 9:00 AM sharp, single infra owner                                                      | Fully scripted redeploy (IaC or a single setup script) for fast recovery |
+| CI           | Flaky concurrency test under CI resource limits   | Real PostgreSQL service and the same 100-request invariant used manually                         | Add diagnostics; do not hide failures with retries                       |
+| Deployment   | Temporary AWS lab account expires mid-event       | Reproducible clean-clone deployment and one designated infrastructure owner                      | Terraform plus a persistent account/domain                               |
 
 ---
 
@@ -640,7 +644,7 @@ The rulebook §5 explicitly warns: _"the most common way teams lose points here 
 | 12:30 | `POST /holds` with `FOR UPDATE` working against a real Postgres in Docker; unit + concurrency test passing               |
 | 14:30 | Full flow working: browse → seat map → hold → OTP → pay (mock webhook) → confirm                                         |
 | 16:00 | Containerised stack runs end-to-end via `docker compose up`; gateway integrated with HMAC + dedup                        |
-| 17:30 | Deployed to Poridhi VM, reachable at a public URL                                                                        |
+| 17:30 | Deployed to AWS EC2, reachable at a public URL                                                                           |
 | 18:00 | Scenario A and Scenario B reports ready; README + DECISIONS.md finalised                                                 |
 | 18:30 | Code freeze                                                                                                              |
 

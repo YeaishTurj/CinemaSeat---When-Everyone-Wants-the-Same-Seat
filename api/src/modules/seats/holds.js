@@ -36,7 +36,8 @@ async function createHold({ showtimeId, seatId, holdId, ttlSeconds }) {
       `UPDATE show_seats
           SET status = 'HELD',
               hold_id = $3,
-              hold_expires_at = now() + ($4 * interval '1 second')
+              hold_expires_at = now() + ($4 * interval '1 second'),
+              booking_id = NULL
         WHERE showtime_id = $1 AND seat_id = $2`,
       [showtimeId, seatId, holdId, ttlSeconds],
     );
