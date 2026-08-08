@@ -654,11 +654,12 @@ describe('POST /webhooks/payment', () => {
 
 **Goal:** Every Dockerfile is multi-stage, image sizes are sane, CI is green on PRs.
 
-> **Implemented and locally verified on 8 August 2026.** Both images are
+> **Implemented and verified locally and on GitHub on 8 August 2026.** Both images are
 > multi-stage/non-root, lockfiles are committed, real lint replaces placeholder
 > scripts, all six API tests pass against PostgreSQL, the Next.js production
 > build passes, and Compose health checks are green. Measured images: API
-> 49.9 MB, frontend 63.8 MB.
+> 49.9 MB, frontend 63.8 MB. The push CI and SSH deployment workflows passed,
+> and the protected `main` ruleset requires both CI jobs before merging.
 
 ### 8.1 Multi-stage `api/Dockerfile`
 
@@ -799,11 +800,11 @@ jobs:
 - [x] Every PR builds the api and frontend Docker images
 - [x] `docker images` shows `api` < 250 MB and `frontend` < 400 MB (49.9 MB / 63.8 MB measured)
 - [x] Successful default-branch push CI triggers the deploy workflow
-- [ ] PRs without green CI cannot be merged (branch protection rule)
+- [x] PRs without green CI cannot be merged (branch protection rule)
 
-The final item is a GitHub repository setting, not a code change: protect
-`main` and require the `API lint, test, and image` and
-`Frontend lint, build, and image` checks.
+The active `Main branch protection` ruleset protects `main`, blocks deletion
+and force-pushes, requires pull requests, and requires the
+`API lint, test, and image` and `Frontend lint, build, and image` checks.
 
 ---
 
