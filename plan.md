@@ -124,10 +124,15 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: cinema
+      POSTGRES_DB: cinemaseat
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./db/migrations:/docker-entrypoint-initdb.d
+      # Postgres only auto-runs *.sql files at the top of docker-entrypoint-initdb.d
+      # in lexicographic order. Mount a single combined directory so
+      # migrations then seed run in sequence on first boot.
+      # db/init/0001_init.sql  ← schema
+      # db/init/0002_seed.sql  ← seed
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -138,7 +143,9 @@ services:
     image: asifmahmoud414/mock-gateway:latest
     ports: ["9000:9000"]
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9000/health"]
+      # gateway binds IPv4-only; `localhost` resolves to ::1 inside this image,
+      # so use 127.0.0.1 explicitly. wget ships with the image.
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:9000/health"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -275,7 +282,7 @@ CREATE TABLE otp_sessions (
 );
 ```
 
-Migrations run automatically via Postgres's `docker-entrypoint-initdb.d` on first boot. For subsequent boots against an existing volume, wire a tiny `db/migrate.sh` invoked by the api image's entrypoint.
+Migrations run automatically via Postgres's `docker-entrypoint-initdb.d` on first boot. Both files are mirrored into `db/init/0001_init.sql` and `db/init/0002_seed.sql` so Postgres picks them up in lexicographic order. For subsequent boots against an existing volume (`docker compose up -d` without `-v`), scripts do NOT re-run — Postgres only auto-runs them on a fresh `pgdata`. To re-apply, `docker compose down -v` first.
 
 ### 4.2 Seed data
 
@@ -337,10 +344,12 @@ module.exports = { charge, sendOtp, verifyOtp };
 ### 4.5 Done-when checklist
 
 - [ ] `docker compose down -v && docker compose up -d` runs migrations automatically
-- [ ] `docker compose exec postgres psql -U postgres -d cinema -c '\dt'` lists all 9 tables
-- [ ] `docker compose exec postgres psql -U postgres -d cinema -c 'SELECT count(*) FROM show_seats;'` returns > 0
-- [ ] From inside the api container: `curl http://gateway:9000/health` returns 200 (proves internal DNS works)
+- [ ] `docker compose exec postgres psql -U postgres -d cinemaseat -c '\dt'` lists all 10 tables (9 from the schema + the `seats` table)
+- [ ] `docker compose exec postgres psql -U postgres -d cinemaseat -c 'SELECT count(*) FROM show_seats;'` returns 720 (6 showtimes × 120 seats)
+- [ ] From inside the api container: `wget -q -O - http://gateway:9000/health` returns 200 (proves internal DNS works)
 - [ ] From inside the api container: `node -e "require('./src/shared/gateway').charge({amount:1,booking_ref:'x',callback_url:'http://api:3000/webhooks/payment',idempotencyKey:'x'})"` returns 202
+
+> **Status (end of Phase 2):** all four checks pass against the live stack. Confirmed tables, seed counts, and gateway round-trip on 2026-08-08.
 
 ### 4.6 The "one bug everybody makes" reminder
 

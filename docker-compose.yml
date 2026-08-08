@@ -1,0 +1,60 @@
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+
+  api:
+    build: ./api
+    ports:
+      - "3001:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    environment:
+      - HOLD_TTL_SECONDS=${HOLD_TTL_SECONDS:-300}
+      - DATABASE_URL=${DATABASE_URL}
+      - GATEWAY_URL=${GATEWAY_URL}
+      - GATEWAY_SECRET=${GATEWAY_SECRET}
+      - PORT=3000
+
+  postgres:
+    image: postgres:16
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-cinemaseat}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Postgres only auto-runs *.sql files at the top of docker-entrypoint-initdb.d
+      # in lexicographic order. Mount a single combined directory so
+      # migrations then seed run in sequence on first boot.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  gateway:
+    image: asifmahmoud414/mock-gateway:latest
+    ports:
+      - "9000:9000"
+    environment:
+      - PORT=9000
+    healthcheck:
+      # The gateway binds IPv4-only; `localhost` resolves to ::1 inside this image,
+      # so use 127.0.0.1 explicitly. wget ships with the image.
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:9000/health"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata:

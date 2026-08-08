@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cinemaseat
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/cinemaseat
+      HOLD_TTL_SECONDS: "10"
+      GATEWAY_URL: http://localhost:9000
+      GATEWAY_SECRET: z2p-2026-secret
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint + test API
+        working-directory: api
+        run: |
+          npm ci
+          npm run lint
+          # Schema + seed are loaded by the local docker-compose workflow; in CI
+          # the service container is created empty, so apply them directly.
+          psql "postgres://postgres:postgres@localhost:5432/cinemaseat" \
+            -v ON_ERROR_STOP=1 -f ../db/init/0001_init.sql
+          psql "postgres://postgres:postgres@localhost:5432/cinemaseat" \
+            -v ON_ERROR_STOP=1 -f ../db/init/0002_seed.sql
+          npm test
+
+      - name: Lint + build Frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+
+      - name: Docker build (api)
+        run: docker build -t cinemaseat-api ./api
+
+      - name: Docker build (frontend)
+        run: docker build -t cinemaseat-frontend ./frontend
