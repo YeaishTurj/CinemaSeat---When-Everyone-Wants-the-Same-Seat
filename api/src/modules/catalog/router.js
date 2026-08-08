@@ -53,7 +53,7 @@ router.get("/showtimes/:id/seats", async (req, res, next) => {
     }
     const { rows } = await query(
       `SELECT se.id AS seat_id, se.row_label, se.seat_number,
-              ss.status, ss.hold_expires_at
+              ss.showtime_id, ss.status, ss.hold_expires_at
          FROM show_seats ss
          JOIN seats se ON se.id = ss.seat_id
         WHERE ss.showtime_id = $1

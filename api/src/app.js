@@ -22,7 +22,11 @@ function createApp() {
   app.use(accessLogger);
 
   // Webhook endpoints must read the raw body for HMAC verification.
-  // Mount them BEFORE express.json() so they get Buffer, not parsed JSON.
+  // Mount them BEFORE express.json() so the body arrives as a Buffer,
+  // not a JSON-parsed object. See ARCHITECTURE.md §10 + gateway reference.
+  app.use(payments); // /webhooks/payment
+  app.use(otp); // /webhooks/otp
+
   app.use(
     express.json({
       limit: "256kb",
@@ -37,8 +41,6 @@ function createApp() {
   app.use(catalog); // /movies, /showtimes, /showtimes/:id/seats
   app.use(seats); // /holds
   app.use(bookings); // /bookings...
-  app.use(payments); // /webhooks/payment
-  app.use(otp); // /webhooks/otp
 
   // 404.
   app.use((req, res) => {
